@@ -485,9 +485,9 @@ function getHtmlForm() {
 				} else {
 					// if its more than 20 seconds too late, wait for the next cycle
 					$offset = $DATA['logs']['live']['filemtime'] % LIVE_UPDATE;
-					$t = ($NOW % LIVE_UPDATE) + LIVE_UPDATE + $offset;
-					if ($t > LIVE_UPDATE) $t -= LIVE_UPDATE;
-					$t -= 15;
+					$t = LIVE_UPDATE + $offset - ($NOW % LIVE_UPDATE) - 15;
+					$t %= LIVE_UPDATE;
+					if ($t < 20) $t = 20;
 				}
 				$autorefresh = $t;
 			}
