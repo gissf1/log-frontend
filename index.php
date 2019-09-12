@@ -355,7 +355,9 @@ function cron() {
 
 function help() {
 	$me = basename($GLOBALS['argv'][0]);
-	echo "usage: {$me}\n";
+	echo "usage: {$me} [options]\n";
+	echo "options:\n";
+	echo "  -v --verbose  display more output during cron run.\n";
 	echo "\n";
 	echo "This execution is expected to be from a cron script and will read\n";
 	echo "data and perform required operations on file: ".DATAFILE."\n";
@@ -364,6 +366,7 @@ function help() {
 }
 
 function process($argv) {
+	global $VERBOSITY;
 	$help = false;
 	$mode = 'cron';
 	
@@ -372,6 +375,10 @@ function process($argv) {
 		switch($argv[$i]) {
 			case '--cron':
 				$mode = 'cron';
+				break;
+			case '-v':
+			case '--verbose':
+				$VERBOSITY++;
 				break;
 			case '-h':
 			case '--help':
