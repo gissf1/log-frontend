@@ -373,9 +373,6 @@ function process($argv) {
 	// parse arguments
 	for($i=1; $i < count($argv); $i++) {
 		switch($argv[$i]) {
-			case '--cron':
-				$mode = 'cron';
-				break;
 			case '-v':
 			case '--verbose':
 				$VERBOSITY++;
