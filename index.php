@@ -306,7 +306,7 @@ function updateLogs() {
 	foreach($DATA['logs'] as $k => $v) {
 		if (is_null($v['data'])) {
 			if (!file_exists($v['file'])) {
-				unset($DATA['logs'][$id]);
+				unset($DATA['logs'][$k]);
 				continue;
 			}
 			if ($v['requested'] > 0) {
