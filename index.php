@@ -1,7 +1,6 @@
 <?php
 
 define('DATAFILE', __DIR__.'/.data.json');
-define('RAWLOGDIR', '/var/log/httpd');
 define('MAXDATA', 10485760);
 define('LIVE_UPDATE', 300);
 define('MIN_REFRESH', 30);
@@ -152,18 +151,29 @@ function closeData($doSave = true, $retries = 5) {
 function getLogFiles() {
 	global $DATA;
 	// search filesystem for logs to process
-	$logFiles = glob(RAWLOGDIR.'/access_log*');
+	$logGlobs = array(
+		'/var/log/httpd/access_log',
+		'/var/log/httpd/error_log',
+		'/var/log/httpd/ssl_access_log',
+		'/var/log/httpd/ssl_error_log',
+		'/var/log/php-fpm/error.log',
+		'/var/log/php-fpm/www-error.log',
+	);
+	$logFiles = array();
+	foreach($logGlobs as $k => $v) {
+		$logFiles = array_merge($logFiles, glob($v));
+	}
 	$logs = array();
 	foreach($logFiles as $k => $v) {
-		$logname = basename($v);
-		$logname = preg_replace('~(\.(log|gz|zip|bz2|xz))+$~', '', $logname);
-		$logname = preg_replace('~^access_log(-[0-9]+)?$~', '\1', $logname);
-		if ($logname == '') {
-			$logname = 'live';
-		} elseif (preg_match('~^-([0-9]+)$~', $logname, $m)) {
+		$logname = $v;
+		//$logname = basename($v);
+		//$logname = preg_replace('~(\.(log|gz|zip|bz2|xz))+$~', '', $logname);
+		//$logname = preg_replace('~^.*[_.]log(-[0-9]+)?$~', '\1', $logname);
+		if (preg_match('~^/var/log/([-_a-z]+/[-_a-z]+[._]log)$~', $logname, $m)) {
 			$logname = $m[1];
 		} else {
 			echo "unknown logname: '$logname' from '$v'\n";
+			continue;
 		}
 		$logs[$logname] = array(
 			'name' => $logname,
@@ -202,17 +212,6 @@ function findBinary($basename) {
 	return false;
 }
 
-function updateGoaccessBinary() {
-	global $GOACCESS;
-	if (!empty($GOACCESS)) return $GOACCESS;
-	$path = findBinary('goaccess');
-	if ($path !== false) {
-		$GOACCESS = $path;
-		return true;
-	}
-	return false;
-}
-
 function updateGunzipBinary() {
 	global $GUNZIP;
 	if (!empty($GUNZIP)) return $GUNZIP;
@@ -225,75 +224,68 @@ function updateGunzipBinary() {
 }
 
 function updateLog($id) {
-	global $DATA, $GOACCESS, $GUNZIP, $VERBOSITY;
+	global $DATA, $GUNZIP, $VERBOSITY;
 	
-	// build command line for goaccess
-	if (empty($GOACCESS)) {
-		if (!updateGoaccessBinary()) {
-			echo "failed to find required goaccess binary.\n";
-			return false;
-		}
-	}
 	$lfn = $DATA['logs'][$id]['file'];
-	$LFN = escapeshellarg($lfn);
-	$tfn = "/tmp/report-{$id}.html";
-	$TFN = escapeshellarg($tfn);
+	if (!file_exists($lfn)) {
+		echo "Failed to read log: file not found.\n";
+		return false;
+	}
+	// get mtime and size of input log file
+	$lfm = filemtime($lfn);
+	$lfs = filesize($lfn);
+	if (!is_readable($lfn)) {
+		echo "Failed to read log: file not readable.\n";
+		return false;
+	}
+	if ($lfs >= MAXDATA) {
+		echo "log file is too large: $lfs bytes.\n";
+		return false;
+	}
 	if (preg_match('~\.gz$~', $DATA['logs'][$id]['file'])) {
+		// build command line for log access
+		$LFN = escapeshellarg($lfn);
+		$rnd = time() . '-' . random_int(PHP_INT_MIN, PHP_INT_MAX);
+		$rnd = dechex(crc32($rnd));
+		$tfn = "/tmp/logdata-$rnd.txt";
+		$TFN = escapeshellarg($tfn);
 		if (empty($GUNZIP)) {
 			if (!updateGunzipBinary()) {
 				echo "failed to find required gunzip binary.\n";
 				return false;
 			}
 		}
-		$CMD = "{$GUNZIP} -cd $LFN | {$GOACCESS} - -o {$TFN}";
+		$CMD = "{$GUNZIP} -cd $LFN > {$TFN}";
+		// execute CMD to get temporary output file
+		if ($VERBOSITY >= 1) {
+			echo "Executing: $CMD\n";
+		}
+		system($CMD, $ret);
+		if ($ret !== 0) {
+			echo "Failed to generate data with CMD; error code {$ret}.\n";
+			return false;
+		}
+		$filedata = file_get_contents($TFN);
+		// remove temporary output file
+		unlink($TFN);
 	} else {
-		$CMD = "{$GOACCESS} {$LFN} -o {$TFN}";
+		// gather file data
+		$filedata = file_get_contents($lfn);
 	}
-	// get mtime and size of input log file
-	$lfm = filemtime($lfn);
-	$lfs = filesize($lfn);
-	// execute goaccess to get temporary output file
-	if ($VERBOSITY >= 1) {
-		echo "Executing: $CMD\n";
-	} else {
-		$CMD = "{$CMD} --no-progress";
-	}
-	system($CMD, $ret);
-	if ($ret !== 0) {
-		echo "Failed to generate data with goaccess; error code {$ret}.\n";
-		return false;
-	}
-	if (!file_exists($tfn)) {
-		echo "Failed to generate data with goaccess; output file not found.\n";
-		return false;
-	}
-	if (!is_readable($tfn)) {
-		echo "Failed to generate data with goaccess; output file not readable.\n";
-		return false;
-	}
-	// gather file data
-	$s = filesize($tfn);
-	if ($s >= MAXDATA) {
-		echo "Generated data from goaccess was too large: $s bytes.\n";
-		return false;
-	}
-	$filedata = file_get_contents($tfn);
 	if (!is_string($filedata)) {
-		echo "Failed to generate data with goaccess; output file read failed.\n";
+		echo "Failed to read log: file read failed.\n";
 		return false;
 	}
 	$filedata = gzencode($filedata, 9);
 	if (!is_string($filedata)) {
-		echo "Failed to process data from goaccess; output file data failed to compress.\n";
+		echo "Failed to read log: file data failed to compress.\n";
 		return false;
 	}
 	$filedata = base64_encode($filedata);
 	if (!is_string($filedata)) {
-		echo "Failed to process data from goaccess; output file data failed to encode.\n";
+		echo "Failed to read log: file data failed to encode.\n";
 		return false;
 	}
-	// remove file
-	unlink($tfn);
 	// store in data array
 	$DATA['logs'][$id]['filemtime'] = $lfm;
 	$DATA['logs'][$id]['filesize'] = $lfs;
@@ -312,26 +304,19 @@ function updateLogs() {
 			if ($v['requested'] > 0) {
 				updateLog($k);
 			}
-		}
-	}
-	// live gets special treatment because it needs periodic refreshes
-	if (!empty($DATA['logs']['live'])) {
-		if (!is_null($DATA['logs']['live']['data'])) {
-			$v = $DATA['logs']['live'];
-			if (// when: data older than LIVE_UPDATE
-				$NOW - $v['requested'] >= LIVE_UPDATE
-				// && refreshed since last mtime
-				&& $v['refreshed'] >= $v['filemtime']
-				// && refreshed within LIVE_UPDATE
-				&& $NOW - $v['refreshed'] <= LIVE_UPDATE
-			) {
-				// check if log file is modified after last mtime/size
-				$lfn = $v['file'];
-				$lfm = filemtime($lfn);
-				$lfs = filesize($lfn);
-				if ($lfm != $v['filemtime'] || $lfs != $v['filesize']) {
-					updateLog('live');
-				}
+		} elseif (// when: data older than LIVE_UPDATE
+			$NOW - $v['requested'] >= LIVE_UPDATE
+			// && refreshed since last mtime
+			&& $v['refreshed'] >= $v['filemtime']
+			// && refreshed within LIVE_UPDATE
+			&& $NOW - $v['refreshed'] <= LIVE_UPDATE
+		) {
+			// check if log file is modified after last mtime/size
+			$lfn = $v['file'];
+			$lfm = filemtime($lfn);
+			$lfs = filesize($lfn);
+			if ($lfm != $v['filemtime'] || $lfs != $v['filesize']) {
+				updateLog($k);
 			}
 		}
 	}
@@ -361,7 +346,6 @@ function help() {
 	echo "\n";
 	echo "This execution is expected to be from a cron script and will read\n";
 	echo "data and perform required operations on file: ".DATAFILE."\n";
-	echo "This script is programmed to analyze logs in: ".RAWLOGDIR."\n";
 	exit(1);
 }
 
@@ -405,7 +389,10 @@ function dumpSelectedLog() {
 		return;
 	}
 	$logname = $_REQUEST['logname'];
-	if (empty($logname)) $logname = 'live';
+	if (empty($logname)) {
+		echo "Please select a log first.";
+		return;
+	}
 	if (empty($DATA['logs'][$logname])) {
 		echo "Invalid logname: {$logname}\n";
 		return;
@@ -413,12 +400,10 @@ function dumpSelectedLog() {
 	$has_data = !is_null($DATA['logs'][$logname]['data']);
 	$requested = intval($DATA['logs'][$logname]['requested']);
 	if ($has_data) {
-		if ($logname == 'live') {
-			$lastRequested = $NOW - $DATA['logs'][$logname]['requested'];
-			$lastRefreshed = $NOW - $DATA['logs'][$logname]['refreshed'];
-			if ($lastRequested >= 120 && $lastRefreshed >= 120) {
-				$DATA['logs'][$logname]['refreshed'] = $NOW;
-			}
+		$lastRequested = $NOW - $DATA['logs'][$logname]['requested'];
+		$lastRefreshed = $NOW - $DATA['logs'][$logname]['refreshed'];
+		if ($lastRequested >= 120 && $lastRefreshed >= 120) {
+			$DATA['logs'][$logname]['refreshed'] = $NOW;
 		}
 		$d = (base64_decode($DATA['logs'][$logname]['data']));
 		echo gzinflate(substr($d,10,-8));
@@ -434,7 +419,7 @@ function getHtmlForm() {
 	global $DATA, $NOW;
 	// build options from data
 	if (empty($_REQUEST['logname'])) {
-		$_REQUEST['logname'] = 'live';
+		$_REQUEST['logname'] = '';
 	}
 	if (empty($DATA['logs'])) {
 		$k = $_REQUEST['logname'];
@@ -455,6 +440,10 @@ function getHtmlForm() {
 			$optionsList .= "<option value='{$k}' class='{$cls}'{$selected}>{$k}</option>";
 		}
 	}
+	// verify selected logname is valid
+	if (empty($options[$_REQUEST['logname']])) {
+		$_REQUEST['logname'] = '';
+	}
 	// build refresh options
 	$refreshOptionsList = '';
 	$t = MIN_REFRESH;
@@ -473,10 +462,12 @@ function getHtmlForm() {
 		$txt = "{$val} sec";
 		$selected = ($val == $autorefresh) ? ' selected' : '';
 		if (!empty($selected)) {
-			if (empty($DATA['logs']['live']['filemtime'])) {
+			if (empty($DATA['logs'][$_REQUEST['logname']])) {
+				$autorefresh = 20;
+			} elseif (empty($DATA['logs'][$_REQUEST['logname']]['filemtime'])) {
 				$autorefresh = 20;
 			} else {
-				$t = $DATA['logs']['live']['filemtime'] + LIVE_UPDATE;
+				$t = $DATA['logs'][$_REQUEST['logname']]['filemtime'] + LIVE_UPDATE;
 				// Q: what are we testing for?
 				// A: we want to trigger just before mtime+updatetime
 				$t -= 15;
@@ -488,7 +479,7 @@ function getHtmlForm() {
 					$t = 20;
 				} else {
 					// if its more than 20 seconds too late, wait for the next cycle
-					$offset = $DATA['logs']['live']['filemtime'] % LIVE_UPDATE;
+					$offset = $DATA['logs'][$_REQUEST['logname']]['filemtime'] % LIVE_UPDATE;
 					$t = LIVE_UPDATE + $offset - ($NOW % LIVE_UPDATE) - 15;
 					$t %= LIVE_UPDATE;
 					if ($t < 20) $t = 20;
@@ -507,8 +498,7 @@ function getHtmlForm() {
 		$doRefresh = 1;
 	} else {
 		$selectedHasData = empty($DATA['logs'][$_REQUEST['logname']]['data']) ? 0 : 1;
-		$doRefresh = (!$selectedHasData || ($_REQUEST['logname'] == 'live')) ? 1 : 0;
-		$doRefresh = ($autorefresh > 0) ? $doRefresh : 0;
+		$doRefresh = ($autorefresh > 0) ? intval(!$selectedHasData) : 0;
 	}
 	// return HTML content
 	return "
@@ -521,8 +511,8 @@ function getHtmlForm() {
 					}
 					var indexForm = document.getElementById('indexForm');
 					indexForm.submit();
-				}
-				if ($doRefresh) {
+				};
+				if ($doRefresh != 0) {
 					timeout = setTimeout(doSubmit, {$autorefresh}000);
 				}
 			</script>
@@ -540,7 +530,6 @@ function getHtmlForm() {
 function render() {
 	$result = openData();
 	if ($result !== true) echo $result;
-	dumpSelectedLog();
 ?>
 <html>
 <head>
@@ -549,7 +538,7 @@ body .indexer {
 	top:0;
 	right:0;
 	display: block;
-	position: absolute;
+	position: fixed;
 	background-color: #ddd;
 	border: 3px double silver;
 }
@@ -562,8 +551,16 @@ body .indexer option.hasData {
 body .indexer option.noData {
 	color: #999;
 }
+body .logdata {
+	margin-top:35px;
+	position: absolute;
+	border-top: 1px solid black;
+}
 </style>
 </head><body>
+<pre class="logdata">
+<?php dumpSelectedLog(); ?>
+</pre>
 	<div class="indexer">
 		<?php echo getHtmlForm(); ?>
 	</div>
