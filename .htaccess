@@ -1,27 +1,21 @@
 <IfModule mod_rewrite.c>
 RewriteEngine On
 
-# force https
-RewriteCond %{HTTPS} off
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
 # ensure we direct to the index page
-RewriteBase /goaccess
-RewriteRule ^index\.php$ - [L]
+RewriteBase /logs
 
-# data.json is off limits
-RewriteRule ^. index.php [L]
+# dot files are off limits
+RewriteRule ^\. - [L,F] 
 
 #RewriteCond %{REQUEST_FILENAME} !-f
 #RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /goaccess/index.php [L]
-
+RewriteRule ^ index.php [L]
 </IfModule>
 
 # BEGIN Password Protect
 AuthType Basic
-AuthName "GoAccess Protected Area"
-AuthUserFile /var/www/html/goaccess/.htpasswd
+AuthName "Logs Protected Area"
+AuthUserFile /var/www/html/logs/.htpasswd
 Require valid-user
 # END Password Protect
 
