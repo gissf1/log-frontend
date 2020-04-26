@@ -503,6 +503,13 @@ function getHtmlForm() {
 	} else {
 		$selectedHasData = empty($DATA['logs'][$_REQUEST['logname']]['data']) ? 0 : 1;
 		$doRefresh = ($autorefresh > 0) ? intval(!$selectedHasData) : 0;
+		if ($selectedHasData) {
+			$selectedLogMetadata = '<pair><key>Size:</key><val>'
+			. number_format($DATA['logs'][$_REQUEST['logname']]['filesize'])
+			. ' bytes</val></pair><pair><key>mTime:</key><val>'
+			. date("Y-m-d H:i T", $DATA['logs'][$_REQUEST['logname']]['filemtime'])
+			. '</val></pair>';
+		}
 	}
 	// return HTML content
 	return "
@@ -524,10 +531,46 @@ function getHtmlForm() {
 			<select name='logname' onChange='doSubmit();'>
 				{$optionsList}
 			</select>
+			<span class='loginfo'>$selectedLogMetadata</span>
 			Refresh:
 			<select name='autorefresh' onChange='doSubmit();'>
 				{$refreshOptionsList}
 			</select>
+			<script>
+				function saveAsFile() {
+					var data = document.getElementsByClassName('logdata');
+					var t = [];
+					for(var e=0; e<data.length; e++) {
+						if (data[e].tagName == 'PRE') {
+							t.push(data[e]);
+						}
+					}
+					if (t.length == 0) {
+						alert('data is missing');
+					} else if (t.length > 1) {
+						alert('multiple data elements; report this error');
+					} else {
+						data = t.pop();
+						delete t;
+						// dynamic save from: https://stackoverflow.com/questions/3665115/how-to-create-a-file-in-memory-for-user-to-download-but-not-through-server
+						var blob = new Blob([data.innerHTML], {type: 'text/plain'});
+						var t = document.getElementsByName('logname')[0].value;
+						var filename = t.replace('/', '__');
+						if(window.navigator.msSaveOrOpenBlob) {
+							window.navigator.msSaveBlob(blob, filename);
+						} else {
+							var elem = window.document.createElement('a');
+							elem.href = window.URL.createObjectURL(blob);
+							elem.download = filename;
+							document.body.appendChild(elem);
+							elem.click();
+							document.body.removeChild(elem);
+							window.URL.revokeObjectURL(blob);
+						}
+					}
+				}
+			</script>
+			<button onClick='saveAsFile();'>Save...</button>
 		</form>";
 }
 
@@ -554,6 +597,19 @@ body .indexer option.hasData {
 }
 body .indexer option.noData {
 	color: #999;
+}
+body .indexer .loginfo {}
+body .indexer .loginfo pair {
+	margin: 0 3px;
+	border: 1px solid silver;
+}
+body .indexer .loginfo key {
+	background: #ddd;
+	padding: 0 3px;
+}
+body .indexer .loginfo val {
+	background: #eee;
+	padding: 0 3px;
 }
 body .logdata {
 	margin-top:35px;
