@@ -444,6 +444,10 @@ function getHtmlForm() {
 	if (empty($options[$_REQUEST['logname']])) {
 		$_REQUEST['logname'] = '';
 	}
+	// allow fast initial selection
+	if (empty($_REQUEST['logname'])) {
+		$optionsList = "<option value=''>(select a log file)</option>$optionsList";
+	}
 	// build refresh options
 	$refreshOptionsList = '';
 	$t = MIN_REFRESH;
