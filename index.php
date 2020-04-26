@@ -612,7 +612,7 @@ body .indexer .loginfo val {
 	padding: 0 3px;
 }
 body .logdata {
-	margin-top:35px;
+	margin-top:36px;
 	position: absolute;
 	border-top: 1px solid black;
 }
